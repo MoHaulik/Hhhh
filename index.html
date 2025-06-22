@@ -1,0 +1,1037 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Healthcare Training VR - Branching Scenarios</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: #fff; 
+            overflow: hidden; 
+            min-height: 100vh; 
+        }
+        
+        /* Intro Screen */
+        #intro {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #2c5aa0 0%, #1e3c72 100%);
+            z-index: 1000;
+        }
+        #intro h1 {
+            font-size: 48px;
+            margin-bottom: 10px;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+        #intro h2 {
+            font-size: 24px;
+            margin-bottom: 20px;
+            opacity: 0.9;
+        }
+        #intro p {
+            font-size: 18px;
+            margin-bottom: 30px;
+            text-align: center;
+            opacity: 0.8;
+            max-width: 600px;
+            line-height: 1.5;
+        }
+        #intro button {
+            padding: 15px 40px;
+            font-size: 20px;
+            background: rgba(255,255,255,0.2);
+            border: 2px solid #fff;
+            color: #fff;
+            border-radius: 50px;
+            cursor: pointer;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+        }
+        #intro button:hover {
+            background: rgba(255,255,255,0.3);
+            transform: scale(1.05);
+        }
+        
+        /* XR Active Styles */
+        .xr-active #intro { display: none; }
+        .exit-xr {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(255,255,255,0.9);
+            color: #333;
+            border: none;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            cursor: pointer;
+            z-index: 9999;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+        .xr-active .exit-xr { display: flex; }
+        
+        /* Status */
+        #status {
+            position: fixed;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.8);
+            color: #fff;
+            padding: 12px 24px;
+            border-radius: 16px;
+            font-size: 16px;
+            display: none;
+            z-index: 9999;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+        
+        /* Progress Indicator */
+        #progress {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.8);
+            color: #fff;
+            padding: 15px;
+            border-radius: 10px;
+            display: none;
+            z-index: 9999;
+            backdrop-filter: blur(10px);
+        }
+        .xr-active #progress { display: block; }
+    </style>
+</head>
+<body>
+    <div id="intro">
+        <h1>Healthcare Training VR</h1>
+        <h2>Branching Scenarios</h2>
+        <p>
+            Immersive 360° video training for healthcare professionals.<br>
+            Watch scenarios unfold and make critical decisions that shape the outcome.<br>
+            Use hand controllers to point and select your responses in realistic situations.
+        </p>
+        <button id="start">Start Training</button>
+    </div>
+    
+    <button class="exit-xr" id="exitBtn">×</button>
+    <div id="status"></div>
+    <div id="progress">
+        <div>Scenario: <span id="current-scenario">1</span> of <span id="total-scenarios">2</span></div>
+        <div>Progress: <span id="scenario-progress">Ready</span></div>
+    </div>
+    
+    <video id="video" style="display: none;" playsinline crossorigin="anonymous" muted></video>
+
+    <script type="module">
+        import * as THREE from 'https://unpkg.com/three@0.150.1/build/three.module.js';
+
+        let camera, scene, renderer, immersiveSphere, controllers = [], xrSession = null;
+        let videoElement, videoTexture, videoMaterial;
+        let isPlaying = false, currentScenario = 1, isDecisionTime = false;
+        let decisionPanel, choiceOrbs = [], confirmationPanel;
+        let currentChoices = [], selectedChoice = null, isConfirming = false;
+        let transitionSphere = null, transitionText = null;
+        let raycaster, hoveredOrb = null;
+        
+        // Training scenarios configuration
+        const scenarios = {
+            1: {
+                video: 'cgrebet.mp4',
+                decisionTime: 8000, // Show decision after 8 seconds
+                text: "You notice a patient showing signs of distress during a routine check-up. Their breathing appears labored and they seem anxious. What is your immediate priority?",
+                choices: [
+                    { id: 1, text: "Take vital signs immediately", correct: true, next: 2 },
+                    { id: 2, text: "Call for emergency assistance", correct: false, next: 1 },
+                    { id: 3, text: "Ask about their medical history", correct: false, next: 1 },
+                    { id: 4, text: "Provide reassurance and calm them", correct: false, next: 1 },
+                    { id: 5, text: "Continue with routine procedure", correct: false, next: 1 }
+                ]
+            },
+            2: {
+                video: 'klassisk.mp4',
+                decisionTime: 10000, // Show decision after 10 seconds
+                text: "The patient's vital signs show elevated heart rate and blood pressure. They mention chest tightness. The situation requires careful assessment and appropriate action.",
+                choices: [
+                    { id: 1, text: "Administer oxygen immediately", correct: false, next: 1 },
+                    { id: 2, text: "Perform ECG and contact physician", correct: true, next: 'complete' },
+                    { id: 3, text: "Give them water and wait", correct: false, next: 1 },
+                    { id: 4, text: "Suggest they lie down and rest", correct: false, next: 1 },
+                    { id: 5, text: "Schedule follow-up appointment", correct: false, next: 1 }
+                ]
+            }
+        };
+        
+        // UI Event Listeners
+        document.getElementById('start').addEventListener('click', () => {
+            document.getElementById('intro').style.display = 'none';
+            initXR();
+        });
+        
+        document.getElementById('exitBtn').addEventListener('click', () => xrSession?.end());
+        
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            document.body.appendChild(renderer.domElement);
+            
+            scene.add(new THREE.AmbientLight(0x404040, 0.6));
+            scene.add(new THREE.DirectionalLight(0xffffff, 0.4));
+            
+            // Initialize raycaster
+            raycaster = new THREE.Raycaster();
+            
+            videoElement = document.getElementById('video');
+            videoTexture = new THREE.VideoTexture(videoElement);
+            videoTexture.minFilter = THREE.LinearFilter;
+            videoTexture.magFilter = THREE.LinearFilter;
+            
+            videoMaterial = new THREE.MeshBasicMaterial({ map: videoTexture });
+            
+            window.addEventListener('resize', onWindowResize);
+        }
+        
+        function initXR() {
+            init();
+            
+            if (!navigator.xr) {
+                updateStatus('WebXR not supported');
+                return;
+            }
+            
+            navigator.xr.isSessionSupported('immersive-vr').then(supported => {
+                if (supported) {
+                    navigator.xr.requestSession('immersive-vr', {
+                        optionalFeatures: ['hand-tracking', 'local-floor']
+                    }).then(onSessionStarted);
+                } else {
+                    updateStatus('VR not supported');
+                }
+            });
+        }
+        
+        function onSessionStarted(session) {
+            xrSession = session;
+            document.body.classList.add('xr-active');
+            
+            renderer.xr.setReferenceSpaceType('local-floor');
+            renderer.xr.setSession(session);
+            renderer.setClearColor(0x000000, 1);
+            
+            setupControllers();
+            startScenario(currentScenario);
+            
+            renderer.setAnimationLoop(render);
+            session.addEventListener('end', onSessionEnd);
+            
+            updateStatus('Healthcare Training Started - Point and click to make decisions');
+            updateProgress();
+        }
+        
+        function setupControllers() {
+            for (let i = 0; i < 2; i++) {
+                const controller = renderer.xr.getController(i);
+                controller.userData.id = i;
+                
+                // Add ray line for visual feedback
+                const rayGeometry = new THREE.BufferGeometry().setFromPoints([
+                    new THREE.Vector3(0, 0, 0),
+                    new THREE.Vector3(0, 0, -3)
+                ]);
+                const rayMaterial = new THREE.LineBasicMaterial({
+                    color: i === 0 ? 0x88aaff : 0xff8888,
+                    transparent: true,
+                    opacity: 0.8
+                });
+                const rayLine = new THREE.Line(rayGeometry, rayMaterial);
+                controller.add(rayLine);
+                
+                // Add hand visual
+                const handGeometry = new THREE.SphereGeometry(0.01, 12, 12);
+                const handMaterial = new THREE.MeshBasicMaterial({
+                    color: i === 0 ? 0x88aaff : 0xff8888,
+                    transparent: true,
+                    opacity: 0.7
+                });
+                const handMesh = new THREE.Mesh(handGeometry, handMaterial);
+                controller.add(handMesh);
+                
+                controller.addEventListener('selectstart', onSelectStart);
+                controller.addEventListener('selectend', onSelectEnd);
+                scene.add(controller);
+                controllers.push(controller);
+            }
+        }
+        
+        function createImmersiveSphere() {
+            if (immersiveSphere) scene.remove(immersiveSphere);
+            
+            const sphereGeometry = new THREE.SphereGeometry(10, 32, 16);
+            immersiveSphere = new THREE.Mesh(sphereGeometry, videoMaterial);
+            immersiveSphere.material.side = THREE.BackSide;
+            immersiveSphere.rotation.y = THREE.MathUtils.degToRad(80);
+            scene.add(immersiveSphere);
+        }
+        
+        function startScenario(scenarioId) {
+            if (!scenarios[scenarioId]) {
+                completeTraining();
+                return;
+            }
+            
+            currentScenario = scenarioId;
+            isDecisionTime = false;
+            isConfirming = false;
+            selectedChoice = null;
+            hoveredOrb = null;
+            
+            // Clear existing UI elements
+            clearDecisionUI();
+            clearTransitionEffect();
+            
+            loadVideo(scenarios[scenarioId].video);
+            updateProgress();
+            
+            // Set timer for decision point
+            setTimeout(() => {
+                if (isPlaying && !isDecisionTime) {
+                    showDecisionPoint();
+                }
+            }, scenarios[scenarioId].decisionTime);
+        }
+        
+        function loadVideo(videoFile) {
+            if (videoElement.src) {
+                videoElement.pause();
+                videoElement.currentTime = 0;
+                URL.revokeObjectURL(videoElement.src);
+            }
+            
+            isPlaying = false;
+            
+            videoElement.src = videoFile;
+            videoElement.autoplay = true;
+            videoElement.playsInline = true;
+            videoElement.muted = true; // Start muted for VR
+            videoElement.loop = false;
+            
+            videoElement.removeEventListener('loadeddata', onVideoLoaded);
+            videoElement.addEventListener('loadeddata', onVideoLoaded);
+            
+            videoElement.load();
+            
+            videoElement.play().then(() => {
+                isPlaying = true;
+                videoElement.muted = false; // Unmute after starting
+            }).catch(err => {
+                updateStatus('Video playback failed: ' + err.message);
+            });
+        }
+        
+        function onVideoLoaded() {
+            createImmersiveSphere();
+            if (videoTexture) {
+                videoTexture.needsUpdate = true;
+            }
+            updateStatus(`Scenario ${currentScenario} loaded`);
+        }
+        
+        function showDecisionPoint() {
+            if (isDecisionTime) return;
+            
+            isDecisionTime = true;
+            
+            // Slow down video and mute audio during decision
+            videoElement.playbackRate = 0.3;
+            videoElement.muted = true;
+            
+            const scenario = scenarios[currentScenario];
+            currentChoices = scenario.choices;
+            
+            createDecisionPanel(scenario.text, scenario.choices);
+            updateStatus('Decision time - Point at orbs to select, click to choose');
+        }
+        
+        function createRoundedRect(ctx, x, y, width, height, radius) {
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.lineTo(x + width - radius, y);
+            ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+            ctx.lineTo(x + width, y + height - radius);
+            ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+            ctx.lineTo(x + radius, y + height);
+            ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+            ctx.lineTo(x, y + radius);
+            ctx.quadraticCurveTo(x, y, x + radius, y);
+            ctx.closePath();
+        }
+        
+        function createDecisionPanel(text, choices) {
+            clearDecisionUI();
+            
+            // Create main decision panel
+            decisionPanel = new THREE.Group();
+            decisionPanel.position.set(0, 1.8, -2.2);
+            
+            // Create rounded panel geometry using canvas for rounded corners
+            const panelCanvas = document.createElement('canvas');
+            panelCanvas.width = 1024;
+            panelCanvas.height = 612;
+            const panelCtx = panelCanvas.getContext('2d');
+            
+            // Draw rounded rectangle background with border
+            const radius = 40;
+            
+            // Border (darker)
+            panelCtx.fillStyle = '#E5E2DD';
+            createRoundedRect(panelCtx, 10, 10, 1004, 592, radius);
+            panelCtx.fill();
+            
+            // Main panel (lighter)
+            panelCtx.fillStyle = '#F8F6F3';
+            createRoundedRect(panelCtx, 20, 20, 984, 572, radius - 10);
+            panelCtx.fill();
+            
+            // Add subtle inner shadow for depth
+            const gradient = panelCtx.createRadialGradient(512, 306, 100, 512, 306, 500);
+            gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+            gradient.addColorStop(1, 'rgba(0, 0, 0, 0.05)');
+            panelCtx.fillStyle = gradient;
+            createRoundedRect(panelCtx, 20, 20, 984, 572, radius - 10);
+            panelCtx.fill();
+            
+            const panelTexture = new THREE.CanvasTexture(panelCanvas);
+            const panelMaterial = new THREE.MeshBasicMaterial({
+                map: panelTexture,
+                transparent: true,
+                opacity: 0.95
+            });
+            
+            const panelMesh = new THREE.Mesh(
+                new THREE.PlaneGeometry(3.0, 1.8),
+                panelMaterial
+            );
+            decisionPanel.add(panelMesh);
+            
+            // Create text canvas
+            const textCanvas = document.createElement('canvas');
+            textCanvas.width = 1024;
+            textCanvas.height = 612;
+            const textCtx = textCanvas.getContext('2d');
+            
+            // Text styling
+            textCtx.fillStyle = '#2C3E50';
+            textCtx.font = 'bold 28px -apple-system, BlinkMacSystemFont, Arial, sans-serif';
+            textCtx.textAlign = 'center';
+            textCtx.textBaseline = 'top';
+            
+            // Word wrap text
+            const words = text.split(' ');
+            const lines = [];
+            let currentLine = '';
+            const maxWidth = 900;
+            
+            words.forEach(word => {
+                const testLine = currentLine + word + ' ';
+                const metrics = textCtx.measureText(testLine);
+                if (metrics.width > maxWidth && currentLine !== '') {
+                    lines.push(currentLine);
+                    currentLine = word + ' ';
+                } else {
+                    currentLine = testLine;
+                }
+            });
+            lines.push(currentLine);
+            
+            // Draw lines with proper spacing
+            const lineHeight = 38;
+            const startY = 80;
+            lines.forEach((line, index) => {
+                textCtx.fillText(line, 512, startY + (index * lineHeight));
+            });
+            
+            // Instructions
+            textCtx.font = '22px -apple-system, BlinkMacSystemFont, Arial, sans-serif';
+            textCtx.fillStyle = '#5D6D7E';
+            textCtx.fillText('Point controller at numbered choices and click to select:', 512, startY + (lines.length * lineHeight) + 50);
+            
+            const textTexture = new THREE.CanvasTexture(textCanvas);
+            const textMaterial = new THREE.MeshBasicMaterial({
+                map: textTexture,
+                transparent: true
+            });
+            
+            const textMesh = new THREE.Mesh(
+                new THREE.PlaneGeometry(2.95, 1.75),
+                textMaterial
+            );
+            textMesh.position.z = 0.01;
+            decisionPanel.add(textMesh);
+            
+            scene.add(decisionPanel);
+            
+            // Create choice orbs positioned below the text panel
+            createChoiceOrbs(choices);
+        }
+        
+        function createChoiceOrbs(choices) {
+            choiceOrbs = [];
+            
+            const orbGroup = new THREE.Group();
+            orbGroup.position.set(0, 0.6, -1.2); // Positioned for easy ray targeting
+            
+            choices.forEach((choice, index) => {
+                // Arrange orbs in two rows
+                let x, y, z;
+                
+                if (index < 3) {
+                    // Top row
+                    x = (index - 1) * 0.6; // -0.6, 0, 0.6
+                    y = 0.15;
+                    z = 0;
+                } else {
+                    // Bottom row
+                    x = (index - 3.5) * 0.6; // -0.3, 0.3
+                    y = -0.15;
+                    z = 0;
+                }
+                
+                const orbGeometry = new THREE.SphereGeometry(0.08, 16, 16);
+                const orbMaterial = new THREE.MeshBasicMaterial({
+                    color: 0x3A5FCD, // Royal blue color for better visibility
+                    transparent: true,
+                    opacity: 0.9
+                });
+                
+                const orb = new THREE.Mesh(orbGeometry, orbMaterial);
+                orb.position.set(x, y, z);
+                
+                // Add number label with better contrast
+                const numberCanvas = document.createElement('canvas');
+                numberCanvas.width = 128;
+                numberCanvas.height = 128;
+                const numberCtx = numberCanvas.getContext('2d');
+                
+                // White background circle for number
+                numberCtx.fillStyle = '#FFFFFF';
+                numberCtx.beginPath();
+                numberCtx.arc(64, 64, 50, 0, Math.PI * 2);
+                numberCtx.fill();
+                
+                // Blue number
+                numberCtx.fillStyle = '#1E3A8A';
+                numberCtx.font = 'bold 56px Arial';
+                numberCtx.textAlign = 'center';
+                numberCtx.textBaseline = 'middle';
+                numberCtx.fillText(choice.id.toString(), 64, 64);
+                
+                const numberTexture = new THREE.CanvasTexture(numberCanvas);
+                const numberMaterial = new THREE.MeshBasicMaterial({
+                    map: numberTexture,
+                    transparent: true
+                });
+                
+                const numberMesh = new THREE.Mesh(
+                    new THREE.PlaneGeometry(0.12, 0.12),
+                    numberMaterial
+                );
+                numberMesh.position.z = 0.09;
+                orb.add(numberMesh);
+                
+                orb.userData = {
+                    isChoice: true,
+                    choice: choice,
+                    originalMaterial: orbMaterial,
+                    isSelected: false,
+                    isHovered: false
+                };
+                
+                orbGroup.add(orb);
+                choiceOrbs.push(orb);
+            });
+            
+            scene.add(orbGroup);
+        }
+        
+        function updateOrbInteractions() {
+            if (!isDecisionTime || isConfirming) return;
+            
+            // Reset previous hover state
+            if (hoveredOrb && hoveredOrb.userData.isHovered) {
+                hoveredOrb.userData.isHovered = false;
+                updateOrbAppearance(hoveredOrb);
+            }
+            hoveredOrb = null;
+            
+            // Check for intersections with each controller
+            controllers.forEach(controller => {
+                const tempMatrix = new THREE.Matrix4();
+                tempMatrix.identity().extractRotation(controller.matrixWorld);
+                
+                raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+                raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+                
+                const intersects = raycaster.intersectObjects(choiceOrbs);
+                
+                if (intersects.length > 0) {
+                    const intersectedOrb = intersects[0].object;
+                    if (!intersectedOrb.userData.isHovered) {
+                        intersectedOrb.userData.isHovered = true;
+                        hoveredOrb = intersectedOrb;
+                        updateOrbAppearance(intersectedOrb);
+                    }
+                }
+            });
+        }
+        
+        function updateOrbAppearance(orb) {
+            const { isSelected, isHovered } = orb.userData;
+            
+            if (isSelected) {
+                // Selected state - gold color, larger scale
+                orb.userData.originalMaterial.color.setHex(0xFFD700);
+                orb.scale.set(1.2, 1.2, 1.2);
+            } else if (isHovered) {
+                // Hovered state - brighter blue, slightly larger
+                orb.userData.originalMaterial.color.setHex(0x5A7FFF);
+                orb.scale.set(1.1, 1.1, 1.1);
+            } else {
+                // Default state
+                orb.userData.originalMaterial.color.setHex(0x3A5FCD);
+                orb.scale.set(1, 1, 1);
+            }
+        }
+        
+        function onSelectStart(event) {
+            if (!isDecisionTime) return;
+            
+            if (isConfirming && confirmationPanel) {
+                handleConfirmation(event.target);
+                return;
+            }
+            
+            // Find which orb is being targeted by this controller
+            const controller = event.target;
+            const tempMatrix = new THREE.Matrix4();
+            tempMatrix.identity().extractRotation(controller.matrixWorld);
+            
+            raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+            raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+            
+            const intersects = raycaster.intersectObjects(choiceOrbs);
+            
+            if (intersects.length > 0) {
+                const intersectedOrb = intersects[0].object;
+                selectOrDeselectChoice(intersectedOrb);
+            }
+        }
+        
+        function selectOrDeselectChoice(choiceOrb) {
+            if (choiceOrb.userData.isSelected) {
+                // Deselect current choice
+                choiceOrb.userData.isSelected = false;
+                selectedChoice = null;
+                updateOrbAppearance(choiceOrb);
+                updateStatus('Choice deselected - Point at an orb and click to select');
+            } else {
+                // Deselect all other orbs first
+                choiceOrbs.forEach(orb => {
+                    orb.userData.isSelected = false;
+                    updateOrbAppearance(orb);
+                });
+                
+                // Select this orb
+                choiceOrb.userData.isSelected = true;
+                selectedChoice = choiceOrb.userData.choice;
+                updateOrbAppearance(choiceOrb);
+                
+                // Show confirmation
+                showConfirmation(selectedChoice);
+            }
+        }
+        
+        function onSelectEnd(event) {
+            // Handle select end if needed
+        }
+        
+        function showConfirmation(choice) {
+            isConfirming = true;
+            
+            // Create confirmation panel with rounded corners
+            confirmationPanel = new THREE.Group();
+            confirmationPanel.position.set(0, 1, -1.5);
+            
+            // Create rounded confirmation panel
+            const confirmCanvas = document.createElement('canvas');
+            confirmCanvas.width = 700;
+            confirmCanvas.height = 400;
+            const confirmCtx = confirmCanvas.getContext('2d');
+            
+            // Draw rounded background
+            const radius = 30;
+            confirmCtx.fillStyle = '#E5E2DD';
+            createRoundedRect(confirmCtx, 10, 10, 680, 380, radius);
+            confirmCtx.fill();
+            
+            confirmCtx.fillStyle = '#F8F6F3';
+            createRoundedRect(confirmCtx, 20, 20, 660, 360, radius - 10);
+            confirmCtx.fill();
+            
+            // Add text
+            confirmCtx.fillStyle = '#2C3E50';
+            confirmCtx.font = 'bold 32px -apple-system, BlinkMacSystemFont, Arial, sans-serif';
+            confirmCtx.textAlign = 'center';
+            confirmCtx.textBaseline = 'middle';
+            confirmCtx.fillText('Are you sure?', 350, 80);
+            
+            confirmCtx.font = '20px -apple-system, BlinkMacSystemFont, Arial, sans-serif';
+            confirmCtx.fillStyle = '#34495E';
+            const choiceText = `Choice ${choice.id}: ${choice.text.substring(0, 40)}...`;
+            confirmCtx.fillText(choiceText, 350, 130);
+            
+            confirmCtx.fillStyle = '#27AE60';
+            confirmCtx.font = 'bold 18px -apple-system, BlinkMacSystemFont, Arial, sans-serif';
+            confirmCtx.fillText('Point UP to confirm', 350, 220);
+            confirmCtx.fillStyle = '#E74C3C';
+            confirmCtx.fillText('Point DOWN to cancel', 350, 250);
+            
+            const confirmTexture = new THREE.CanvasTexture(confirmCanvas);
+            const confirmMaterial = new THREE.MeshBasicMaterial({
+                map: confirmTexture,
+                transparent: true,
+                opacity: 0.95
+            });
+            
+            const confirmMesh = new THREE.Mesh(
+                new THREE.PlaneGeometry(2.0, 1.1),
+                confirmMaterial
+            );
+            confirmationPanel.add(confirmMesh);
+            
+            scene.add(confirmationPanel);
+            
+            updateStatus('Point up to confirm, down to cancel');
+        }
+        
+        function handleConfirmation(controller) {
+            const controllerPos = new THREE.Vector3();
+            controller.getWorldPosition(controllerPos);
+            
+            const panelPos = new THREE.Vector3();
+            confirmationPanel.getWorldPosition(panelPos);
+            
+            if (controllerPos.y > panelPos.y + 0.2) {
+                // Confirmed - process choice
+                processChoice(selectedChoice);
+            } else if (controllerPos.y < panelPos.y - 0.2) {
+                // Cancelled
+                cancelConfirmation();
+            }
+        }
+        
+        function cancelConfirmation() {
+            isConfirming = false;
+            selectedChoice = null;
+            
+            if (confirmationPanel) {
+                scene.remove(confirmationPanel);
+                confirmationPanel = null;
+            }
+            
+            // Reset orb selections
+            choiceOrbs.forEach(orb => {
+                orb.userData.isSelected = false;
+                updateOrbAppearance(orb);
+            });
+            
+            updateStatus('Choice cancelled - Point at an orb and click to select');
+        }
+        
+        function processChoice(choice) {
+            clearDecisionUI();
+            
+            // Reset video speed and unmute
+            videoElement.playbackRate = 1.0;
+            videoElement.muted = false;
+            isDecisionTime = false;
+            isConfirming = false;
+            
+            if (choice.correct) {
+                showTransition('correct');
+                setTimeout(() => {
+                    if (choice.next === 'complete') {
+                        completeTraining();
+                    } else {
+                        startScenario(choice.next);
+                    }
+                }, 1500);
+            } else {
+                showTransition('incorrect');
+                setTimeout(() => {
+                    startScenario(currentScenario); // Repeat scenario
+                }, 1500);
+            }
+        }
+        
+        function showTransition(type) {
+            clearTransitionEffect();
+            
+            const isCorrect = type === 'correct';
+            const color = isCorrect ? 0x44AA44 : 0xAA4444;
+            const message = isCorrect ? 'Correct!' : 'Try Again';
+            
+            // Create subtle colored sphere overlay
+            const sphereGeometry = new THREE.SphereGeometry(12, 32, 16);
+            const sphereMaterial = new THREE.MeshBasicMaterial({
+                color: color,
+                transparent: true,
+                opacity: 0.15,
+                side: THREE.BackSide
+            });
+            transitionSphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+            scene.add(transitionSphere);
+            
+            // Create elegant text display
+            const textCanvas = document.createElement('canvas');
+            textCanvas.width = 512;
+            textCanvas.height = 256;
+            const textCtx = textCanvas.getContext('2d');
+            
+            // Subtle background
+            const gradient = textCtx.createRadialGradient(256, 128, 50, 256, 128, 200);
+            gradient.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
+            gradient.addColorStop(1, 'rgba(255, 255, 255, 0.3)');
+            textCtx.fillStyle = gradient;
+            textCtx.fillRect(0, 0, 512, 256);
+            
+            // Text with shadow
+            textCtx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+            textCtx.shadowBlur = 8;
+            textCtx.shadowOffsetY = 4;
+            textCtx.fillStyle = isCorrect ? '#2E7D32' : '#C62828';
+            textCtx.font = 'bold 54px -apple-system, BlinkMacSystemFont, Arial, sans-serif';
+            textCtx.textAlign = 'center';
+            textCtx.textBaseline = 'middle';
+            textCtx.fillText(message, 256, 128);
+            
+            const textTexture = new THREE.CanvasTexture(textCanvas);
+            const textMaterial = new THREE.MeshBasicMaterial({
+                map: textTexture,
+                transparent: true
+            });
+            
+            transitionText = new THREE.Mesh(
+                new THREE.PlaneGeometry(3, 1.5),
+                textMaterial
+            );
+            transitionText.position.set(0, 1.6, -2);
+            scene.add(transitionText);
+            
+            // Animate transition with subtle effect
+            let startTime = Date.now();
+            const animateTransition = () => {
+                const elapsed = Date.now() - startTime;
+                const progress = Math.min(elapsed / 1500, 1);
+                
+                if (transitionSphere) {
+                    // Gentle fade for sphere overlay
+                    transitionSphere.material.opacity = 0.15 * (1 - progress);
+                }
+                
+                if (transitionText) {
+                    // Fade out text more gradually
+                    if (progress > 0.3) {
+                        const textProgress = (progress - 0.3) / 0.7;
+                        transitionText.material.opacity = 1 - textProgress;
+                    }
+                }
+                
+                if (progress < 1) {
+                    requestAnimationFrame(animateTransition);
+                } else {
+                    clearTransitionEffect();
+                }
+            };
+            animateTransition();
+            
+            updateStatus(isCorrect ? 'Correct choice! Proceeding...' : 'Incorrect. Let\'s try again...');
+        }
+        
+        function clearTransitionEffect() {
+            if (transitionSphere) {
+                scene.remove(transitionSphere);
+                transitionSphere = null;
+            }
+            if (transitionText) {
+                scene.remove(transitionText);
+                transitionText = null;
+            }
+        }
+        
+        function clearDecisionUI() {
+            if (decisionPanel) {
+                scene.remove(decisionPanel);
+                decisionPanel = null;
+            }
+            
+            if (confirmationPanel) {
+                scene.remove(confirmationPanel);
+                confirmationPanel = null;
+            }
+            
+            choiceOrbs.forEach(orb => {
+                if (orb.parent) orb.parent.remove(orb);
+            });
+            choiceOrbs = [];
+            hoveredOrb = null;
+        }
+        
+        function completeTraining() {
+            clearDecisionUI();
+            clearTransitionEffect();
+            
+            // Show completion message with rounded corners
+            const completionGroup = new THREE.Group();
+            completionGroup.position.set(0, 1.6, -2);
+            
+            const canvas = document.createElement('canvas');
+            canvas.width = 1024;
+            canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+            
+            // Rounded background
+            const radius = 40;
+            ctx.fillStyle = '#1B5E20';
+            createRoundedRect(ctx, 20, 20, 984, 472, radius);
+            ctx.fill();
+            
+            ctx.fillStyle = '#2E7D32';
+            createRoundedRect(ctx, 30, 30, 964, 452, radius - 10);
+            ctx.fill();
+            
+            // Gradient overlay
+            const gradient = ctx.createLinearGradient(0, 0, 0, 512);
+            gradient.addColorStop(0, 'rgba(76, 175, 80, 0.3)');
+            gradient.addColorStop(1, 'rgba(27, 94, 32, 0.3)');
+            ctx.fillStyle = gradient;
+            createRoundedRect(ctx, 30, 30, 964, 452, radius - 10);
+            ctx.fill();
+            
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 48px -apple-system, BlinkMacSystemFont, Arial, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Training Complete!', 512, 200);
+            
+            ctx.font = '24px -apple-system, BlinkMacSystemFont, Arial, sans-serif';
+            ctx.fillText('Well done! You have completed all scenarios.', 512, 280);
+            ctx.fillText('Exit VR to return to the main menu.', 512, 320);
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            const material = new THREE.MeshBasicMaterial({
+                map: texture,
+                transparent: true
+            });
+            
+            const mesh = new THREE.Mesh(
+                new THREE.PlaneGeometry(4, 2),
+                material
+            );
+            completionGroup.add(mesh);
+            scene.add(completionGroup);
+            
+            updateStatus('Training completed successfully!');
+            updateProgress('Complete');
+        }
+        
+        function updateProgress(customText = null) {
+            document.getElementById('current-scenario').textContent = currentScenario;
+            document.getElementById('total-scenarios').textContent = Object.keys(scenarios).length;
+            document.getElementById('scenario-progress').textContent = customText || (isDecisionTime ? 'Decision Time' : 'Watching');
+        }
+        
+        function updateStatus(message) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.style.display = 'block';
+            
+            setTimeout(() => {
+                if (!message.includes('not supported')) {
+                    status.style.display = 'none';
+                }
+            }, 3000);
+        }
+        
+        function render() {
+            // Update orb interactions with raycasting
+            updateOrbInteractions();
+            
+            // Update video texture
+            if (videoTexture && videoElement.readyState >= videoElement.HAVE_CURRENT_DATA) {
+                videoTexture.needsUpdate = true;
+            }
+            
+            renderer.render(scene, camera);
+        }
+        
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        
+        function onSessionEnd() {
+            document.body.classList.remove('xr-active');
+            document.getElementById('status').style.display = 'none';
+            
+            // Reset all state
+            currentScenario = 1;
+            isDecisionTime = false;
+            isConfirming = false;
+            selectedChoice = null;
+            isPlaying = false;
+            hoveredOrb = null;
+            
+            // Clear scene
+            clearDecisionUI();
+            clearTransitionEffect();
+            
+            if (immersiveSphere) {
+                scene.remove(immersiveSphere);
+                immersiveSphere = null;
+            }
+            
+            // Remove controllers
+            controllers.forEach(controller => scene.remove(controller));
+            controllers = [];
+            
+            // Stop video
+            if (videoElement) {
+                videoElement.pause();
+                videoElement.currentTime = 0;
+            }
+            
+            renderer.setAnimationLoop(null);
+            xrSession = null;
+            
+            // Show intro again
+            document.getElementById('intro').style.display = 'flex';
+        }
+    </script>
+</body>
+</html>
