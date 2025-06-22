@@ -120,7 +120,7 @@
         <p>
             Immersive 360° video training for healthcare professionals.<br>
             Watch scenarios unfold and make critical decisions that shape the outcome.<br>
-            Use hand controllers to point and select your responses in realistic situations.
+            Use hand controllers to point and select your responses and learn from realistic situations.
         </p>
         <button id="start">Start Training</button>
     </div>
@@ -143,7 +143,8 @@
         let decisionPanel, choiceOrbs = [], confirmationPanel;
         let currentChoices = [], selectedChoice = null, isConfirming = false;
         let transitionSphere = null, transitionText = null;
-        let raycaster, hoveredOrb = null;
+        let raycastLines = []; // Store raycaster line objects
+        let hoveredChoice = null; // Track currently hovered choice
         
         // Training scenarios configuration
         const scenarios = {
@@ -193,9 +194,6 @@
             scene.add(new THREE.AmbientLight(0x404040, 0.6));
             scene.add(new THREE.DirectionalLight(0xffffff, 0.4));
             
-            // Initialize raycaster
-            raycaster = new THREE.Raycaster();
-            
             videoElement = document.getElementById('video');
             videoTexture = new THREE.VideoTexture(videoElement);
             videoTexture.minFilter = THREE.LinearFilter;
@@ -239,7 +237,7 @@
             renderer.setAnimationLoop(render);
             session.addEventListener('end', onSessionEnd);
             
-            updateStatus('Healthcare Training Started - Point and click to make decisions');
+            updateStatus('Healthcare Training Started - Point and select choices');
             updateProgress();
         }
         
@@ -247,19 +245,6 @@
             for (let i = 0; i < 2; i++) {
                 const controller = renderer.xr.getController(i);
                 controller.userData.id = i;
-                
-                // Add ray line for visual feedback
-                const rayGeometry = new THREE.BufferGeometry().setFromPoints([
-                    new THREE.Vector3(0, 0, 0),
-                    new THREE.Vector3(0, 0, -3)
-                ]);
-                const rayMaterial = new THREE.LineBasicMaterial({
-                    color: i === 0 ? 0x88aaff : 0xff8888,
-                    transparent: true,
-                    opacity: 0.8
-                });
-                const rayLine = new THREE.Line(rayGeometry, rayMaterial);
-                controller.add(rayLine);
                 
                 // Add hand visual
                 const handGeometry = new THREE.SphereGeometry(0.01, 12, 12);
@@ -270,6 +255,23 @@
                 });
                 const handMesh = new THREE.Mesh(handGeometry, handMaterial);
                 controller.add(handMesh);
+                
+                // Add raycaster line
+                const rayGeometry = new THREE.BufferGeometry().setFromPoints([
+                    new THREE.Vector3(0, 0, 0),
+                    new THREE.Vector3(0, 0, -3)
+                ]);
+                const rayMaterial = new THREE.LineBasicMaterial({
+                    color: i === 0 ? 0x88aaff : 0xff8888,
+                    transparent: true,
+                    opacity: 0.4
+                });
+                const rayLine = new THREE.Line(rayGeometry, rayMaterial);
+                controller.add(rayLine);
+                raycastLines.push(rayLine);
+                
+                // Setup raycaster for this controller
+                controller.userData.raycaster = new THREE.Raycaster();
                 
                 controller.addEventListener('selectstart', onSelectStart);
                 controller.addEventListener('selectend', onSelectEnd);
@@ -298,7 +300,7 @@
             isDecisionTime = false;
             isConfirming = false;
             selectedChoice = null;
-            hoveredOrb = null;
+            hoveredChoice = null;
             
             // Clear existing UI elements
             clearDecisionUI();
@@ -364,7 +366,7 @@
             currentChoices = scenario.choices;
             
             createDecisionPanel(scenario.text, scenario.choices);
-            updateStatus('Decision time - Point at orbs to select, click to choose');
+            updateStatus('Decision time - Point at choices and squeeze trigger');
         }
         
         function createRoundedRect(ctx, x, y, width, height, radius) {
@@ -468,7 +470,7 @@
             // Instructions
             textCtx.font = '22px -apple-system, BlinkMacSystemFont, Arial, sans-serif';
             textCtx.fillStyle = '#5D6D7E';
-            textCtx.fillText('Point controller at numbered choices and click to select:', 512, startY + (lines.length * lineHeight) + 50);
+            textCtx.fillText('Point at a numbered choice below and squeeze trigger to select:', 512, startY + (lines.length * lineHeight) + 50);
             
             const textTexture = new THREE.CanvasTexture(textCanvas);
             const textMaterial = new THREE.MeshBasicMaterial({
@@ -493,7 +495,7 @@
             choiceOrbs = [];
             
             const orbGroup = new THREE.Group();
-            orbGroup.position.set(0, 0.6, -1.2); // Positioned for easy ray targeting
+            orbGroup.position.set(0, 0.6, -1.2); // Moved closer to user (was -1.8)
             
             choices.forEach((choice, index) => {
                 // Arrange orbs in two rows
@@ -568,52 +570,46 @@
             scene.add(orbGroup);
         }
         
-        function updateOrbInteractions() {
+        function updateRaycast() {
             if (!isDecisionTime || isConfirming) return;
             
-            // Reset previous hover state
-            if (hoveredOrb && hoveredOrb.userData.isHovered) {
-                hoveredOrb.userData.isHovered = false;
-                updateOrbAppearance(hoveredOrb);
-            }
-            hoveredOrb = null;
+            let newHoveredChoice = null;
             
-            // Check for intersections with each controller
             controllers.forEach(controller => {
+                const raycaster = controller.userData.raycaster;
+                
+                // Set raycaster from controller position and direction
                 const tempMatrix = new THREE.Matrix4();
                 tempMatrix.identity().extractRotation(controller.matrixWorld);
                 
                 raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
                 raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
                 
+                // Check intersections with choice orbs
                 const intersects = raycaster.intersectObjects(choiceOrbs);
                 
                 if (intersects.length > 0) {
-                    const intersectedOrb = intersects[0].object;
-                    if (!intersectedOrb.userData.isHovered) {
-                        intersectedOrb.userData.isHovered = true;
-                        hoveredOrb = intersectedOrb;
-                        updateOrbAppearance(intersectedOrb);
-                    }
+                    newHoveredChoice = intersects[0].object;
                 }
             });
-        }
-        
-        function updateOrbAppearance(orb) {
-            const { isSelected, isHovered } = orb.userData;
             
-            if (isSelected) {
-                // Selected state - gold color, larger scale
-                orb.userData.originalMaterial.color.setHex(0xFFD700);
-                orb.scale.set(1.2, 1.2, 1.2);
-            } else if (isHovered) {
-                // Hovered state - brighter blue, slightly larger
-                orb.userData.originalMaterial.color.setHex(0x5A7FFF);
-                orb.scale.set(1.1, 1.1, 1.1);
-            } else {
-                // Default state
-                orb.userData.originalMaterial.color.setHex(0x3A5FCD);
-                orb.scale.set(1, 1, 1);
+            // Update hover states
+            if (hoveredChoice !== newHoveredChoice) {
+                // Remove hover from previous choice
+                if (hoveredChoice && !hoveredChoice.userData.isSelected) {
+                    hoveredChoice.userData.originalMaterial.color.setHex(0x3A5FCD);
+                    hoveredChoice.scale.set(1, 1, 1);
+                    hoveredChoice.userData.isHovered = false;
+                }
+                
+                // Add hover to new choice
+                if (newHoveredChoice && !newHoveredChoice.userData.isSelected) {
+                    newHoveredChoice.userData.originalMaterial.color.setHex(0x7B68EE); // Light purple for hover
+                    newHoveredChoice.scale.set(1.1, 1.1, 1.1);
+                    newHoveredChoice.userData.isHovered = true;
+                }
+                
+                hoveredChoice = newHoveredChoice;
             }
         }
         
@@ -625,48 +621,61 @@
                 return;
             }
             
-            // Find which orb is being targeted by this controller
-            const controller = event.target;
-            const tempMatrix = new THREE.Matrix4();
-            tempMatrix.identity().extractRotation(controller.matrixWorld);
-            
-            raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
-            raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
-            
-            const intersects = raycaster.intersectObjects(choiceOrbs);
-            
-            if (intersects.length > 0) {
-                const intersectedOrb = intersects[0].object;
-                selectOrDeselectChoice(intersectedOrb);
-            }
-        }
-        
-        function selectOrDeselectChoice(choiceOrb) {
-            if (choiceOrb.userData.isSelected) {
-                // Deselect current choice
-                choiceOrb.userData.isSelected = false;
-                selectedChoice = null;
-                updateOrbAppearance(choiceOrb);
-                updateStatus('Choice deselected - Point at an orb and click to select');
-            } else {
-                // Deselect all other orbs first
-                choiceOrbs.forEach(orb => {
-                    orb.userData.isSelected = false;
-                    updateOrbAppearance(orb);
-                });
-                
-                // Select this orb
-                choiceOrb.userData.isSelected = true;
-                selectedChoice = choiceOrb.userData.choice;
-                updateOrbAppearance(choiceOrb);
-                
-                // Show confirmation
-                showConfirmation(selectedChoice);
+            // Check if we're pointing at a choice
+            if (hoveredChoice) {
+                selectChoice(hoveredChoice);
             }
         }
         
         function onSelectEnd(event) {
             // Handle select end if needed
+        }
+        
+        function selectChoice(choiceOrb) {
+            const choice = choiceOrb.userData.choice;
+            
+            // If this choice is already selected, deselect it
+            if (choiceOrb.userData.isSelected) {
+                deselectChoice(choiceOrb);
+                return;
+            }
+            
+            // Deselect any previously selected choice
+            choiceOrbs.forEach(orb => {
+                if (orb.userData.isSelected) {
+                    deselectChoice(orb);
+                }
+            });
+            
+            // Select the new choice
+            choiceOrb.userData.isSelected = true;
+            choiceOrb.userData.originalMaterial.color.setHex(0xFFD700); // Gold for selected
+            choiceOrb.scale.set(1.2, 1.2, 1.2);
+            
+            selectedChoice = choice;
+            showConfirmation(choice);
+        }
+        
+        function deselectChoice(choiceOrb) {
+            choiceOrb.userData.isSelected = false;
+            
+            // Return to hover state if still hovered, otherwise default
+            if (choiceOrb === hoveredChoice) {
+                choiceOrb.userData.originalMaterial.color.setHex(0x7B68EE); // Light purple for hover
+                choiceOrb.scale.set(1.1, 1.1, 1.1);
+            } else {
+                choiceOrb.userData.originalMaterial.color.setHex(0x3A5FCD); // Default blue
+                choiceOrb.scale.set(1, 1, 1);
+            }
+            
+            selectedChoice = null;
+            
+            // Hide confirmation panel
+            if (confirmationPanel) {
+                scene.remove(confirmationPanel);
+                confirmationPanel = null;
+                isConfirming = false;
+            }
         }
         
         function showConfirmation(choice) {
@@ -697,7 +706,7 @@
             confirmCtx.font = 'bold 32px -apple-system, BlinkMacSystemFont, Arial, sans-serif';
             confirmCtx.textAlign = 'center';
             confirmCtx.textBaseline = 'middle';
-            confirmCtx.fillText('Are you sure?', 350, 80);
+            confirmCtx.fillText('Confirm Selection?', 350, 80);
             
             confirmCtx.font = '20px -apple-system, BlinkMacSystemFont, Arial, sans-serif';
             confirmCtx.fillStyle = '#34495E';
@@ -706,9 +715,11 @@
             
             confirmCtx.fillStyle = '#27AE60';
             confirmCtx.font = 'bold 18px -apple-system, BlinkMacSystemFont, Arial, sans-serif';
-            confirmCtx.fillText('Point UP to confirm', 350, 220);
+            confirmCtx.fillText('Point UP and squeeze to confirm', 350, 220);
             confirmCtx.fillStyle = '#E74C3C';
-            confirmCtx.fillText('Point DOWN to cancel', 350, 250);
+            confirmCtx.fillText('Point DOWN and squeeze to cancel', 350, 250);
+            confirmCtx.fillStyle = '#5D6D7E';
+            confirmCtx.fillText('Or select the orb again to deselect', 350, 280);
             
             const confirmTexture = new THREE.CanvasTexture(confirmCanvas);
             const confirmMaterial = new THREE.MeshBasicMaterial({
@@ -724,8 +735,6 @@
             confirmationPanel.add(confirmMesh);
             
             scene.add(confirmationPanel);
-            
-            updateStatus('Point up to confirm, down to cancel');
         }
         
         function handleConfirmation(controller) {
@@ -746,20 +755,20 @@
         
         function cancelConfirmation() {
             isConfirming = false;
-            selectedChoice = null;
             
             if (confirmationPanel) {
                 scene.remove(confirmationPanel);
                 confirmationPanel = null;
             }
             
-            // Reset orb selections
-            choiceOrbs.forEach(orb => {
-                orb.userData.isSelected = false;
-                updateOrbAppearance(orb);
-            });
-            
-            updateStatus('Choice cancelled - Point at an orb and click to select');
+            // Deselect the current choice
+            if (selectedChoice) {
+                choiceOrbs.forEach(orb => {
+                    if (orb.userData.choice === selectedChoice) {
+                        deselectChoice(orb);
+                    }
+                });
+            }
         }
         
         function processChoice(choice) {
@@ -898,7 +907,8 @@
                 if (orb.parent) orb.parent.remove(orb);
             });
             choiceOrbs = [];
-            hoveredOrb = null;
+            hoveredChoice = null;
+            selectedChoice = null;
         }
         
         function completeTraining() {
@@ -978,8 +988,8 @@
         }
         
         function render() {
-            // Update orb interactions with raycasting
-            updateOrbInteractions();
+            // Update raycasting for choice selection
+            updateRaycast();
             
             // Update video texture
             if (videoTexture && videoElement.readyState >= videoElement.HAVE_CURRENT_DATA) {
@@ -1004,8 +1014,8 @@
             isDecisionTime = false;
             isConfirming = false;
             selectedChoice = null;
+            hoveredChoice = null;
             isPlaying = false;
-            hoveredOrb = null;
             
             // Clear scene
             clearDecisionUI();
@@ -1016,9 +1026,10 @@
                 immersiveSphere = null;
             }
             
-            // Remove controllers
+            // Remove controllers and raycaster lines
             controllers.forEach(controller => scene.remove(controller));
             controllers = [];
+            raycastLines = [];
             
             // Stop video
             if (videoElement) {
